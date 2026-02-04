@@ -34,3 +34,11 @@ build
 # ZIP archives for Chrome Web Store
 *.zip
 notebooklm-assistant.zip
+
+# Internal documentation (not for public)
+API_DISCOVERY.md
+OAUTH_SETUP.md
+PRIVACY_POLICY_SETUP.md
+PUBLISHING.md
+GITHUB_UPLOAD.md
+TEXT_SOURCE_ISSUE.md
