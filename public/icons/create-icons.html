@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create Extension Icons</title>
+</head>
+<body>
+    <h1>Создание иконок для расширения</h1>
+    <p>Откройте консоль браузера (F12) и выполните скрипт ниже, или используйте любой графический редактор для создания иконок:</p>
+    <p>Размеры: 16x16, 48x48, 128x128 пикселей</p>
+    <canvas id="icon16" width="16" height="16"></canvas>
+    <canvas id="icon48" width="48" height="48"></canvas>
+    <canvas id="icon128" width="128" height="128"></canvas>
+    
+    <script>
+        function createIcon(size, canvasId) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            
+            // Фон
+            ctx.fillStyle = '#4F46E5';
+            ctx.fillRect(0, 0, size, size);
+            
+            // Буква N
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${size * 0.7}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('N', size / 2, size / 2);
+            
+            // Скачать как PNG
+            canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `icon${size}.png`;
+                a.click();
+            });
+        }
+        
+        // Создать все иконки
+        createIcon(16, 'icon16');
+        setTimeout(() => createIcon(48, 'icon48'), 500);
+        setTimeout(() => createIcon(128, 'icon128'), 1000);
+    </script>
+</body>
+</html>
