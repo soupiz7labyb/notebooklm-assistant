@@ -259,37 +259,50 @@ export class UploadQueue {
             throw new Error('File not found');
           }
 
-          const processed = await FileProcessor.processFile(item.file);
+          const extension = item.file.name.split('.').pop()?.toLowerCase() || '';
+          const binaryExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
 
-          if (processed.needsChunking && processed.chunks) {
-            // Upload chunks sequentially
-            useStore.getState().updateQueueItem(item.id, {
-              chunks: processed.chunks.length,
-              currentChunk: 0,
-            });
-
-            for (let i = 0; i < processed.chunks.length; i++) {
-              const chunk = processed.chunks[i];
-              const chunkTitle = `${item.title} (Part ${i + 1}/${processed.chunks!.length})`;
-              await NotebookLMService.addTextSource(notebookId, chunk.text, chunkTitle);
-
-              useStore.getState().updateQueueItem(item.id, {
-                currentChunk: i + 1,
-                progress: ((i + 1) / processed.chunks!.length) * 100,
-              });
-              
-              // Wait for each chunk
-              if (i < processed.chunks.length - 1) {
-                await this.waitForTextSource(notebookId, chunkTitle);
-                await new Promise((resolve) => setTimeout(resolve, 2000));
-              }
-            }
-            // Wait for last chunk
-            await this.waitForTextSource(notebookId, `${item.title} (Part ${processed.chunks.length}/${processed.chunks.length})`);
+          if (binaryExtensions.includes(extension)) {
+            // Binary/image file: upload using file RPC (o4cbdc)
+            await NotebookLMService.addFileSource(notebookId, item.file);
+            // Для бинарных файлов у NotebookLM нет текстового контента, поэтому не ждём waitForTextSource
           } else {
-            // Upload as text source (for TXT, MD, and extracted PDF/DOCX text)
-            await NotebookLMService.addTextSource(notebookId, processed.content, item.title);
-            await this.waitForTextSource(notebookId, item.title);
+            // Text-like files: use existing text pipeline (PDF/TXT/MD/CSV/DOCX)
+            const processed = await FileProcessor.processFile(item.file);
+
+            if (processed.needsChunking && processed.chunks) {
+              // Upload chunks sequentially
+              useStore.getState().updateQueueItem(item.id, {
+                chunks: processed.chunks.length,
+                currentChunk: 0,
+              });
+
+              for (let i = 0; i < processed.chunks.length; i++) {
+                const chunk = processed.chunks[i];
+                const chunkTitle = `${item.title} (Part ${i + 1}/${processed.chunks!.length})`;
+                await NotebookLMService.addTextSource(notebookId, chunk.text, chunkTitle);
+
+                useStore.getState().updateQueueItem(item.id, {
+                  currentChunk: i + 1,
+                  progress: ((i + 1) / processed.chunks!.length) * 100,
+                });
+                
+                // Wait for each chunk
+                if (i < processed.chunks.length - 1) {
+                  await this.waitForTextSource(notebookId, chunkTitle);
+                  await new Promise((resolve) => setTimeout(resolve, 2000));
+                }
+              }
+              // Wait for last chunk
+              await this.waitForTextSource(
+                notebookId,
+                `${item.title} (Part ${processed.chunks.length}/${processed.chunks.length})`
+              );
+            } else {
+              // Upload as text source (for TXT, MD, CSV and extracted PDF/DOCX text)
+              await NotebookLMService.addTextSource(notebookId, processed.content, item.title);
+              await this.waitForTextSource(notebookId, item.title);
+            }
           }
           break;
         }
