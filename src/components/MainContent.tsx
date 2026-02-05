@@ -208,25 +208,84 @@ export function MainContent() {
   const handleFileSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    for (const file of Array.from(files)) {
-      try {
-        const processed = await FileProcessor.processFile(file);
-        const item: UploadItem = {
-          id: crypto.randomUUID(),
-          type: 'file',
-          title: file.name,
-          file,
-          status: 'pending',
-          notebookId: selectedNotebookId,
-          chunks: processed.needsChunking ? processed.chunks?.length : undefined,
-        };
+    const supportedExtensions = [
+      'pdf',
+      'txt',
+      'md',
+      'markdown',
+      'docx',
+      'csv',
+      // binary/image formats (handled via file upload RPC)
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'svg',
+    ];
+    const fileArray = Array.from(files);
 
-        await UploadQueue.addAndProcess(item);
+    const supportedFiles: File[] = [];
+    const skippedFiles: string[] = [];
+
+    for (const file of fileArray) {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      if (supportedExtensions.includes(ext)) {
+        supportedFiles.push(file);
+      } else {
+        skippedFiles.push(file.name);
+      }
+    }
+
+    if (skippedFiles.length > 0) {
+      toast({
+        title: 'Some files were skipped',
+        description: `Unsupported file types: ${skippedFiles.join(
+          ', '
+        )}. Supported: PDF, TXT, MD, DOCX, CSV, PNG, JPG, JPEG, GIF, WEBP, SVG.`,
+      });
+    }
+
+    // Разделяем файлы на текстовые (нужна обработка) и бинарные (загрузка напрямую)
+    const binaryExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+    
+    for (const file of supportedFiles) {
+      try {
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        
+        if (binaryExtensions.includes(ext)) {
+          // Бинарные файлы (изображения) - добавляем напрямую без обработки
+          const item: UploadItem = {
+            id: crypto.randomUUID(),
+            type: 'file',
+            title: file.name,
+            file,
+            status: 'pending',
+            notebookId: selectedNotebookId,
+          };
+          await UploadQueue.addAndProcess(item);
+        } else {
+          // Текстовые файлы - обрабатываем через FileProcessor
+          const processed = await FileProcessor.processFile(file);
+          const item: UploadItem = {
+            id: crypto.randomUUID(),
+            type: 'file',
+            title: file.name,
+            file,
+            status: 'pending',
+            notebookId: selectedNotebookId,
+            chunks: processed.needsChunking ? processed.chunks?.length : undefined,
+          };
+
+          await UploadQueue.addAndProcess(item);
+        }
       } catch (error) {
         console.error('Error processing file:', error);
         toast({
           title: 'Error',
-          description: `Failed to process ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          description: `Failed to process ${file.name}: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
           variant: 'destructive',
         });
       }
@@ -306,7 +365,7 @@ export function MainContent() {
             Drag & drop files here, or click to select
           </p>
           <p className="text-xs text-muted-foreground mb-3">
-            Supports: PDF, TXT, MD, DOCX
+            Supports: PDF, TXT, MD, DOCX, CSV, PNG, JPG, JPEG, GIF, WEBP, SVG
           </p>
           <Button
             variant="outline"
@@ -318,7 +377,7 @@ export function MainContent() {
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.txt,.md,.markdown,.docx"
+            accept=".pdf,.txt,.md,.markdown,.docx,.csv,.png,.jpg,.jpeg,.gif,.webp,.svg"
             className="hidden"
             onChange={(e) => handleFileSelect(e.target.files)}
           />

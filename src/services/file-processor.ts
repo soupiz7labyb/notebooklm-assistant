@@ -49,7 +49,8 @@ export class FileProcessor {
     switch (extension) {
       case 'txt':
       case 'md':
-      case 'markdown': {
+      case 'markdown':
+      case 'csv': {
         const text = await this.readTextFile(file);
         const needsChunking = text.length > CHUNK_SIZE;
 
@@ -152,6 +153,7 @@ export class FileProcessor {
 
     const mimeTypes: Record<string, string> = {
       txt: 'text/plain',
+      csv: 'text/csv',
       md: 'text/markdown',
       markdown: 'text/markdown',
       pdf: 'application/pdf',

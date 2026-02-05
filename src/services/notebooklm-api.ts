@@ -255,12 +255,12 @@ export class NotebookLMService {
           sources = [[null, null, [content.url]]];
         }
       } else if (content.type === 'file') {
-        // File sources are not supported via RPC API
-        // Files should be processed to extract text first, then sent as text sources
-        throw new Error(
-          'Direct file upload is not supported via RPC API. ' +
-          'Please extract text content from the file and upload as text source.'
-        );
+        // Binary file sources are handled by addFileSource (RPC o4cbdc)
+        // This branch should not normally be used directly.
+        await this.addFileSource(notebookId, {
+          fileName: content.fileName || content.title,
+        });
+        return;
       } else {
         throw new Error(`Unsupported content type: ${content.type}`);
       }
@@ -306,6 +306,35 @@ export class NotebookLMService {
       console.error('Error adding source:', error);
       throw error;
     }
+  }
+
+  /**
+   * Add binary file as source (images, etc.) using RPC `o4cbdc`
+   *
+   * This is based on observed f.req payload from NotebookLM:
+   * [[["o4cbdc","[[[\"Screenshot 2024-02-15 115837.png\",13]],\"<notebookId>\",[2],[1,null,null,null,null,null,null,null,null,null,[1]]]",null,"generic"]]]
+   */
+  static async addFileSource(
+    notebookId: string,
+    file: { fileName: string } | File
+  ): Promise<void> {
+    const fileName = file instanceof File ? file.name : file.fileName;
+
+    // 13 — тип источника для файлов (по наблюдаемому запросу NotebookLM)
+    const sourceTypeCode = 13;
+
+    // Структура параметров соответствует строке внутри f.req из твоего примера:
+    // [[[fileName, 13]], notebookId, [2], [1,null,null,null,null,null,null,null,null,null,[1]]]
+    const params = [
+      [[fileName, sourceTypeCode]],
+      notebookId,
+      [2],
+      [1, null, null, null, null, null, null, null, null, null, [1]],
+    ];
+
+    // Вызываем RPC o4cbdc с этой структурой.
+    // Внутри rpc() params будет сериализован в JSON и обёрнут в f.req.
+    await this.rpc('o4cbdc', params, `/notebook/${notebookId}`);
   }
 
   /**
