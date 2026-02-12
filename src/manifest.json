@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "NotebookLM Assistant",
-  "version": "1.0.1",
-  "description": "Send web pages, videos, files, and text directly to your Google NotebookLM projects",
+  "version": "2.0.0",
+  "description": "Send web pages, videos, files, and text to Google NotebookLM, then export generated outputs and source data",
   "permissions": [
     "identity",
     "sidePanel",
