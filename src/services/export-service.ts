@@ -120,12 +120,10 @@ export const CATEGORY_CONFIGS: CategoryConfig[] = [
     id: 'infographics',
     label: 'Infographics',
     icon: '🎨',
-    description: 'PNG, JPG, WebP with watermark',
+    description: 'PNG export only',
     supportsBatch: false,
     formats: [
       { format: 'png', label: 'PNG', extension: '.png', mimeType: 'image/png' },
-      { format: 'jpg', label: 'JPG', extension: '.jpg', mimeType: 'image/jpeg' },
-      { format: 'webp', label: 'WebP', extension: '.webp', mimeType: 'image/webp' },
     ],
   },
   {
@@ -593,8 +591,20 @@ export class ExportService {
           ? content.infographics.filter((i) => selectedIds.includes(i.id))
           : content.infographics;
         if (items.length === 0) throw new Error('No infographics available to export');
-        const infographicContent = { ...content, infographics: items };
-        await this.exportInfographicsWithImages(infographicContent, format, notebookTitle);
+        if (format !== 'png') {
+          throw new Error('Infographics support PNG only.');
+        }
+
+        let started = 0;
+        for (const item of items) {
+          if (!item.imageUrl) continue;
+          const downloadId = await DOMExtractor.downloadViaChrome(item.imageUrl);
+          if (downloadId !== null) started++;
+        }
+
+        if (started === 0) {
+          throw new Error('Could not start infographic download.');
+        }
         break;
       }
       default:
@@ -801,127 +811,4 @@ export class ExportService {
     return slideImages;
   }
 
-  /**
-   * Export infographics using image URLs from the API, with DOM fallback.
-   * Behavior mirrors slide image export: fetch URLs first, fallback to DOM.
-   */
-  private static async exportInfographicsWithImages(
-    content: NotebookFullContent,
-    format: string,
-    notebookTitle: string,
-  ): Promise<void> {
-    const safeTitle = sanitizeFilename(notebookTitle);
-    const timestamp = getTimestamp();
-    let infographicImages: Array<{ id: string; title: string; dataUrl: string }> = [];
-
-    // Strategy 1: Fetch selected infographics via background tabs
-    if (content.infographics.length > 0) {
-      console.log(`Downloading ${content.infographics.length} infographics via background tabs...`);
-      infographicImages = await this.downloadInfographicImages(content.infographics);
-    }
-
-    // Strategy 2: DOM extraction fallback (only useful for the currently open infographic)
-    if (infographicImages.length === 0) {
-      try {
-        const domImageData = await DOMExtractor.extractInfographicImage();
-        if (domImageData) {
-          const dataUrl = domImageData.startsWith('data:')
-            ? domImageData
-            : await DOMExtractor.fetchImageInTabContext(domImageData);
-          if (dataUrl) {
-            infographicImages = [{
-              id: content.infographics[0]?.id ?? 'infographic_1',
-              title: content.infographics[0]?.title ?? 'Infographic',
-              dataUrl,
-            }];
-            console.log('Extracted infographic image from DOM');
-          }
-        }
-      } catch (e) {
-        console.log('DOM infographic extraction failed:', e);
-      }
-    }
-
-    if (infographicImages.length === 0) {
-      throw new Error('Could not download infographic images. Please open the infographic and try again.');
-    }
-
-    const extMap: Record<string, string> = { png: '.png', jpg: '.jpg', webp: '.webp' };
-    const ext = extMap[format] || '.png';
-    const JSZip = (await import('jszip')).default;
-    const zip = new JSZip();
-    let added = 0;
-
-    for (const item of infographicImages) {
-      const blob = await this.convertDataUrlToImageBlob(item.dataUrl, format);
-      if (!blob) continue;
-      zip.file(`${sanitizeFilename(item.title || item.id)}${ext}`, blob);
-      added++;
-    }
-
-    if (added === 0) {
-      throw new Error('Could not extract selected infographic images.');
-    }
-
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(zipBlob, `${safeTitle}_infographics_${timestamp}.zip`);
-  }
-
-  /**
-   * Download infographic images via API URLs using the same strategy as slides.
-   */
-  private static async downloadInfographicImages(
-    infographics: InfographicContent[]
-  ): Promise<Array<{ id: string; title: string; dataUrl: string }>> {
-    const images: Array<{ id: string; title: string; dataUrl: string }> = [];
-    const withUrls = infographics.filter((i) => i.imageUrl);
-    if (withUrls.length === 0) return images;
-
-    console.log(`Fetching ${withUrls.length} infographics via Notebook tab context...`);
-
-    for (const item of infographics) {
-      if (!item.imageUrl) continue;
-      // For infographics this is more reliable than temporary background tabs.
-      let dataUrl = await DOMExtractor.fetchImageInNotebookTabContext(item.imageUrl);
-      if (!dataUrl) {
-        dataUrl = await DOMExtractor.fetchImageInTabContext(item.imageUrl);
-      }
-      if (!dataUrl) {
-        console.warn(`Infographic "${item.title}" failed to fetch`);
-        continue;
-      }
-      images.push({
-        id: item.id,
-        title: item.title || item.id,
-        dataUrl,
-      });
-    }
-
-    console.log(`Successfully fetched ${images.length}/${infographics.length} infographics`);
-    return images;
-  }
-
-  private static async convertDataUrlToImageBlob(
-    dataUrl: string,
-    format: string,
-  ): Promise<Blob | null> {
-    const targetMime = format === 'jpg' ? 'image/jpeg' : `image/${format}`;
-    return new Promise<Blob | null>((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth || img.width;
-        canvas.height = img.naturalHeight || img.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(null);
-          return;
-        }
-        ctx.drawImage(img, 0, 0);
-        canvas.toBlob((b) => resolve(b), targetMime, 0.92);
-      };
-      img.onerror = () => resolve(null);
-      img.src = dataUrl;
-    });
-  }
 }

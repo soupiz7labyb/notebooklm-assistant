@@ -717,20 +717,23 @@ export class DOMExtractor {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => {
-          // Find infographic viewer
+          // Find infographic image inside artifact viewer first (most precise).
           const selectors = [
-            'infographic-viewer img',
-            '.artifact-content img[class*="infographic"]',
-            'artifact-viewer img',
+            'artifact-viewer infographic-viewer foreignObject img[src]',
+            'artifact-viewer infographic-viewer img[src]',
+            'infographic-viewer foreignObject img[src]',
+            'infographic-viewer img[src]',
+            '.artifact-content infographic-viewer img[src]',
+            '.artifact-content img[src*="googleusercontent.com/notebooklm/"]',
           ];
 
           for (const sel of selectors) {
             const img = document.querySelector(sel) as HTMLImageElement;
-            if (img && img.src && img.width > 100) {
+            if (img?.src) {
               try {
                 const canvas = document.createElement('canvas');
-                canvas.width = img.naturalWidth || img.width;
-                canvas.height = img.naturalHeight || img.height;
+                canvas.width = img.naturalWidth || img.width || 1;
+                canvas.height = img.naturalHeight || img.height || 1;
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
                   ctx.drawImage(img, 0, 0);
@@ -900,6 +903,13 @@ export class DOMExtractor {
       // Poll extraction aggressively and only use timeout as final guard.
       const startedAt = Date.now();
       while (Date.now() - startedAt < timeoutMs) {
+        // Exit early if tab was closed/replaced by browser.
+        try {
+          await chrome.tabs.get(tabId!);
+        } catch {
+          throw new Error('Background tab was closed before image extraction');
+        }
+
         // Extract image data via canvas — try ISOLATED world first
         let dataUrl = await this.extractImageFromTab(tabId!);
 
@@ -1070,7 +1080,7 @@ export class DOMExtractor {
    * This is the most reliable way to download authenticated Google URLs.
    * Returns the download ID, or null on failure.
    */
-  static async downloadViaChrome(url: string, filename: string): Promise<number | null> {
+  static async downloadViaChrome(url: string, filename?: string): Promise<number | null> {
     return new Promise((resolve) => {
       chrome.downloads.download({ url, filename, saveAs: false }, (downloadId) => {
         if (chrome.runtime.lastError) {
