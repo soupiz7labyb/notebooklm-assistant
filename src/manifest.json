@@ -11,13 +11,18 @@
     "contextMenus",
     "tabs",
     "cookies",
-    "scripting"
+    "scripting",
+    "downloads"
   ],
   "host_permissions": [
     "https://notebooklm.google.com/*",
     "https://www.youtube.com/*",
     "https://youtube.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://lh3.googleusercontent.com/*",
+    "https://*.usercontent.google.com/*",
+    "https://*.googleusercontent.com/*",
+    "https://*.usercontent.goog/*"
   ],
   "background": {
     "service_worker": "src/background/index.ts",
