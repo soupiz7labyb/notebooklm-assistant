@@ -7,6 +7,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { FileProcessor } from '@/services/file-processor';
 import { YouTubeOptionsDialog } from '@/components/YouTubeOptionsDialog';
+import { YouTubeCommentsService } from '@/services/youtube-comments';
+import { TwitterParser } from '@/services/twitter-parser';
 import { Globe, Type, Upload } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import type { UploadItem } from '@/types';
@@ -70,6 +72,38 @@ export function MainContent() {
           // For video/playlist pages, show YouTube options dialog
           setShowYouTubeDialog(true);
         }
+      } else if (TwitterParser.isTweetPage(url)) {
+        // Twitter/X tweet page — parse visible replies from DOM
+        const itemId = crypto.randomUUID();
+        const placeholder: UploadItem = {
+          id: itemId,
+          type: 'note',
+          title: `Twitter: ${tab.title || 'Tweet'}`,
+          content: '',
+          status: 'processing',
+          notebookId: selectedNotebookId,
+        };
+        useStore.getState().addToQueue(placeholder);
+        toast({
+          title: 'Parsing tweets...',
+          description: 'Extracting visible replies from page',
+        });
+
+        try {
+          const { text, title, tweetCount } = await TwitterParser.parseFromPage(tab.id!);
+          useStore.getState().updateQueueItem(itemId, { title, content: text, status: 'pending' });
+          UploadQueue.processQueue();
+          toast({
+            title: 'Tweets parsed',
+            description: `Loaded ${tweetCount} tweets/replies`,
+          });
+        } catch (parseErr) {
+          useStore.getState().updateQueueItem(itemId, {
+            status: 'error',
+            error: parseErr instanceof Error ? parseErr.message : 'Failed to parse tweets',
+          });
+          throw parseErr;
+        }
       } else {
         const content = await ContentParser.parseCurrentPage();
         const item: UploadItem = {
@@ -97,7 +131,11 @@ export function MainContent() {
     }
   };
 
-  const handleYouTubeOptionSelect = async (option: 'video' | 'playlist' | 'channel', videoUrls: string[]) => {
+  const handleYouTubeOptionSelect = async (
+    option: 'video' | 'playlist' | 'channel' | 'comments',
+    videoUrls: string[],
+    opts?: { videoTitles?: string[]; maxComments?: number; commentSort?: 'top' | 'newest' }
+  ) => {
     try {
       if (option === 'video' && videoUrls.length > 0) {
         // Single video
@@ -122,7 +160,7 @@ export function MainContent() {
           const item: UploadItem = {
             id: crypto.randomUUID(),
             type: 'youtube',
-            title: `Playlist Video ${i + 1}`,
+            title: opts?.videoTitles?.[i] || `Playlist Video ${i + 1}`,
             url: videoUrl,
             status: 'pending',
             notebookId: selectedNotebookId,
@@ -143,7 +181,7 @@ export function MainContent() {
           const item: UploadItem = {
             id: crypto.randomUUID(),
             type: 'youtube',
-            title: `Channel Video ${i + 1}`,
+            title: opts?.videoTitles?.[i] || `Channel Video ${i + 1}`,
             url: videoUrl,
             status: 'pending',
             notebookId: selectedNotebookId,
@@ -157,6 +195,57 @@ export function MainContent() {
           title: 'Added to queue',
           description: `Added ${videoUrls.length} videos from channel`,
         });
+      } else if (option === 'comments') {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab.id || !tab.url) {
+          throw new Error('No active tab found');
+        }
+
+        const videoId = new URL(tab.url).searchParams.get('v');
+        if (!videoId) {
+          throw new Error('Could not find video ID in current tab URL');
+        }
+
+        // Add placeholder to queue immediately so the user can see it
+        const itemId = crypto.randomUUID();
+        const placeholder: UploadItem = {
+          id: itemId,
+          type: 'note',
+          title: `Comments: ${tab.title?.replace(' - YouTube', '').trim() || 'YouTube Video'}`,
+          content: '',
+          status: 'processing', // not 'pending' — prevents processQueue from uploading empty content
+          notebookId: selectedNotebookId,
+        };
+        useStore.getState().addToQueue(placeholder);
+        toast({
+          title: 'Fetching comments...',
+          description: 'This may take a moment',
+        });
+
+        try {
+          const maxComments = opts?.maxComments === 0 ? Infinity : (opts?.maxComments || 500);
+          const { text, title, commentCount } = await YouTubeCommentsService.fetchAndFormat(
+            tab.id,
+            videoId,
+            {
+              maxComments,
+              sortBy: opts?.commentSort || 'top',
+            }
+          );
+          // Update placeholder with real content and switch to 'pending' for queue to pick up
+          useStore.getState().updateQueueItem(itemId, { title, content: text, status: 'pending' });
+          UploadQueue.processQueue();
+          toast({
+            title: 'Comments added',
+            description: `Loaded ${commentCount} comments`,
+          });
+        } catch (fetchErr) {
+          useStore.getState().updateQueueItem(itemId, {
+            status: 'error',
+            error: fetchErr instanceof Error ? fetchErr.message : 'Failed to fetch comments',
+          });
+          throw fetchErr;
+        }
       }
     } catch (error) {
       console.error('Error adding YouTube content:', error);
@@ -315,18 +404,20 @@ export function MainContent() {
         onClose={() => setShowYouTubeDialog(false)}
         onSelect={handleYouTubeOptionSelect}
       />
-      <div className="flex flex-col gap-4 p-4">
-        {/* Main Actions */}
-        <div className="space-y-3">
-          <Button
-            onClick={handleAddCurrentPage}
-            className="w-full"
-            size="lg"
-          >
-            <Globe className="mr-2 h-4 w-4" />
-            Add Current Page
-          </Button>
+      {/* Sticky Add Current Page button */}
+      <div className="sticky top-0 z-10 bg-background border-b border-border p-4">
+        <Button
+          onClick={handleAddCurrentPage}
+          className="w-full"
+          size="lg"
+        >
+          <Globe className="mr-2 h-4 w-4" />
+          Add Current Page
+        </Button>
+      </div>
 
+      <div className="flex flex-col gap-4 p-4">
+        <div className="space-y-3">
           {/* Quick Note */}
         <div className="space-y-2 rounded-lg border border-border bg-card p-4">
           <div className="flex items-center gap-2">
