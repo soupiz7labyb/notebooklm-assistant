@@ -242,7 +242,7 @@ export class UploadQueue {
               const errorCodeMatch = error.message.match(/RPC returned error code: (\d+)/);
               if (errorCodeMatch) {
                 const errorCode = errorCodeMatch[1];
-                const normalErrorCodes = ['139', '140', '141', '412', '466', '496', '497', '536', '537', '552', '553'];
+                const normalErrorCodes = ['139', '140', '141', '412', '450', '466', '496', '497', '536', '537', '552', '553'];
                 if (normalErrorCodes.includes(errorCode)) {
                   // Normal error - resource was added successfully, don't throw
                   break;
@@ -361,7 +361,7 @@ export class UploadQueue {
             const errorCodeMatch = error.message.match(/RPC returned error code: (\d+)/);
             if (errorCodeMatch) {
               const errorCode = errorCodeMatch[1];
-                const normalErrorCodes = ['139', '140', '141', '412', '466', '496', '497', '536', '537', '552', '553'];
+                const normalErrorCodes = ['139', '140', '141', '412', '450', '466', '496', '497', '536', '537', '552', '553'];
               if (normalErrorCodes.includes(errorCode)) {
                 // Normal error - resource was added, just mark as done
                 useStore.getState().updateQueueItem(item.id, {

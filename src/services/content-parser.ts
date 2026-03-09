@@ -218,35 +218,58 @@ export class ContentParser {
   }
 
   /**
-   * Extract YouTube transcript (if available)
+   * Extract YouTube transcript via ytInitialPlayerResponse captions API.
+   * Returns plain text of the transcript, or null if unavailable.
    */
   static async getYouTubeTranscript(): Promise<string | null> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab.id) {
+    if (!tab.id || !tab.url?.includes('youtube.com/watch')) {
       return null;
     }
 
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => {
-          // Try to find transcript button and extract text
-          // This is a simplified version - might need more sophisticated approach
-          const transcriptButton = document.querySelector(
-            'button[aria-label*="transcript"], button[aria-label*="Transcript"]'
-          );
+        world: 'MAIN',
+        func: async () => {
+          try {
+            // ytInitialPlayerResponse is embedded in the page by YouTube
+            const playerResponse = (window as any).ytInitialPlayerResponse;
+            const tracks: any[] =
+              playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
 
-          if (!transcriptButton) {
+            if (!tracks.length) return null;
+
+            // Prefer English track, fallback to first available
+            const track =
+              tracks.find((t: any) => t.languageCode === 'en') ||
+              tracks.find((t: any) => t.languageCode?.startsWith('en')) ||
+              tracks[0];
+
+            const url = track.baseUrl + '&fmt=json3';
+            const resp = await fetch(url);
+            if (!resp.ok) return null;
+
+            const data = await resp.json();
+
+            // data.events: [{segs: [{utf8: "..."}], tStartMs: N, dDurationMs: N}]
+            const lines: string[] = [];
+            for (const event of (data.events || [])) {
+              const text = (event.segs || [])
+                .map((s: any) => s.utf8 || '')
+                .join('');
+              const clean = text.replace(/\n/g, ' ').trim();
+              if (clean) lines.push(clean);
+            }
+
+            return lines.length ? lines.join(' ') : null;
+          } catch {
             return null;
           }
-
-          // This would need to click the button and extract text
-          // For now, return null and let NotebookLM handle the URL
-          return null;
         },
       });
 
-      return results?.[0]?.result || null;
+      return results?.[0]?.result ?? null;
     } catch (error) {
       console.error('Error extracting transcript:', error);
       return null;
@@ -259,6 +282,7 @@ export class ContentParser {
   static async detectYouTubePageType(): Promise<{
     type: 'video' | 'playlist' | 'playlist_video' | 'channel' | null;
     videoUrls?: string[];
+    videoTitles?: string[];
     title?: string;
   }> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -281,6 +305,7 @@ export class ContentParser {
 
           let type: 'video' | 'playlist' | 'playlist_video' | 'channel' | null = null;
           const videoUrls: string[] = [];
+          const videoTitles: string[] = [];
 
           if (url.includes('/playlist')) {
             // Dedicated playlist page
@@ -293,6 +318,7 @@ export class ContentParser {
                 videoUrl.searchParams.delete('list');
                 videoUrl.searchParams.delete('index');
                 videoUrls.push(videoUrl.toString());
+                videoTitles.push((video as HTMLElement).textContent?.trim() || '');
               }
             });
           } else if (url.includes('/watch') && hasPlaylistParam) {
@@ -316,6 +342,15 @@ export class ContentParser {
                     videoUrl.searchParams.delete('index');
                     videoUrl.searchParams.delete('pp');
                     videoUrls.push(videoUrl.toString());
+                    // Title lives in a child span or aria-label
+                    const titleEl =
+                      video.querySelector('#video-title') ||
+                      video.querySelector('span#video-title');
+                    videoTitles.push(
+                      (titleEl as HTMLElement)?.textContent?.trim() ||
+                      (video as HTMLElement).getAttribute('aria-label') ||
+                      ''
+                    );
                   }
                 });
                 break;
@@ -332,6 +367,8 @@ export class ContentParser {
                   videoUrl.searchParams.delete('list');
                   videoUrl.searchParams.delete('index');
                   videoUrls.push(videoUrl.toString());
+                  const titleEl = video.querySelector('#video-title') || video.querySelector('span');
+                  videoTitles.push((titleEl as HTMLElement)?.textContent?.trim() || '');
                 }
               });
             }
@@ -339,6 +376,7 @@ export class ContentParser {
             // Single video
             type = 'video';
             videoUrls.push(url.split('&')[0].split('?')[0] + '?v=' + urlObj.searchParams.get('v'));
+            videoTitles.push(document.title.replace(' - YouTube', '').trim());
           } else if (url.includes('/@') || url.includes('/channel/') || url.includes('/c/')) {
             // Channel page
             type = 'channel';
@@ -349,16 +387,32 @@ export class ContentParser {
               const href = video.getAttribute('href');
               if (href && href.includes('/watch')) {
                 videoUrls.push(`https://www.youtube.com${href.split('&')[0]}`);
+                // aria-label contains the full title for these elements
+                const ariaLabel = (video as HTMLElement).getAttribute('aria-label') || '';
+                videoTitles.push(ariaLabel.split('\n')[0].trim() ||
+                  (video as HTMLElement).textContent?.trim() || '');
               }
             });
           }
 
-          // Remove duplicates and limit to 50
-          const uniqueUrls = [...new Set(videoUrls)].slice(0, 50);
+          // Remove duplicates (keep titles in sync) and limit to 50
+          const seen = new Set<string>();
+          const uniqueUrls: string[] = [];
+          const uniqueTitles: string[] = [];
+          for (let i = 0; i < videoUrls.length; i++) {
+            if (!seen.has(videoUrls[i])) {
+              seen.add(videoUrls[i]);
+              uniqueUrls.push(videoUrls[i]);
+              uniqueTitles.push(videoTitles[i] || '');
+            }
+          }
+          const slicedUrls = uniqueUrls.slice(0, 50);
+          const slicedTitles = uniqueTitles.slice(0, 50);
 
           return {
             type,
-            videoUrls: uniqueUrls,
+            videoUrls: slicedUrls,
+            videoTitles: slicedTitles,
             title: document.title.replace(' - YouTube', ''),
           };
         },
